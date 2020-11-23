@@ -1,8 +1,41 @@
-use serde::Deserialize;
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
+pub use crate::credential::container::ContainerProvider;
+pub use crate::credential::environment::EnvironmentProvider;
+pub use crate::credential::instance_metadata::InstanceMetadataProvider;
+pub use crate::credential::profile::ProfileProvider;
 
+mod container;
+mod environment;
+mod instance_metadata;
+mod profile;
+mod request;
+mod static_provider;
+
+use chrono::{DateTime, Duration as ChronoDuration, ParseError, Utc};
+use serde::Deserialize;
+
+use async_trait::async_trait;
+use hyper::Error as HyperError;
 use std::collections::BTreeMap;
+use std::env::{var as env_var, VarError};
+use std::error::Error;
 use std::fmt;
+use std::io::Error as IoError;
+use std::string::FromUtf8Error;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Mutex;
+
+/// Representation of anonymity
+pub trait Anonymous {
+    /// Return true if a type is anonymous, false otherwise
+    fn is_anonymous(&self) -> bool;
+}
+
+impl Anonymous for AwsCredentials {
+    fn is_anonymous(&self) -> bool {
+        self.aws_access_key_id().is_empty() && self.aws_secret_access_key().is_empty()
+    }
+}
 
 /// AWS API access credentials, including access key, secret key, token (for IAM profiles),
 /// expiration timestamp, and claims from federated login.
@@ -102,4 +135,307 @@ impl fmt::Debug for AwsCredentials {
             .field("claims", &self.claims)
             .finish()
     }
+}
+
+/// Represents an Error that has occured during the fetching Credentials Phase.
+///
+/// This generally is an error message from one of our underlying libraries, however
+/// we wrap it up with this type so we can export one single error type.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CredentialsError {
+    /// The underlying error message for the credentials error.
+    pub message: String,
+}
+
+impl CredentialsError {
+    /// Creates a new Credentials Error.
+    ///
+    /// * `message` - The Error message for this CredentialsError.
+    pub fn new<S>(message: S) -> CredentialsError
+    where
+        S: ToString,
+    {
+        CredentialsError {
+            message: message.to_string(),
+        }
+    }
+}
+
+impl fmt::Display for CredentialsError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl Error for CredentialsError {}
+
+impl From<ParseError> for CredentialsError {
+    fn from(err: ParseError) -> CredentialsError {
+        CredentialsError::new(err)
+    }
+}
+
+impl From<IoError> for CredentialsError {
+    fn from(err: IoError) -> CredentialsError {
+        CredentialsError::new(err)
+    }
+}
+
+impl From<HyperError> for CredentialsError {
+    fn from(err: HyperError) -> CredentialsError {
+        CredentialsError::new(format!("Couldn't connect to credentials provider: {}", err))
+    }
+}
+
+impl From<serde_json::Error> for CredentialsError {
+    fn from(err: serde_json::Error) -> CredentialsError {
+        CredentialsError::new(err)
+    }
+}
+
+impl From<VarError> for CredentialsError {
+    fn from(err: VarError) -> CredentialsError {
+        CredentialsError::new(err)
+    }
+}
+
+impl From<FromUtf8Error> for CredentialsError {
+    fn from(err: FromUtf8Error) -> CredentialsError {
+        CredentialsError::new(err)
+    }
+}
+
+/// A trait for types that produce `AwsCredentials`.
+#[async_trait]
+pub trait ProvideAwsCredentials {
+    /// Produce a new `AwsCredentials` future.
+    async fn credentials(&self) -> Result<AwsCredentials, CredentialsError>;
+}
+
+#[async_trait]
+impl<P: ProvideAwsCredentials + Send + Sync> ProvideAwsCredentials for Arc<P> {
+    async fn credentials(&self) -> Result<AwsCredentials, CredentialsError> {
+        P::credentials(self).await
+    }
+}
+
+/// Wrapper for `ProvideAwsCredentials` that caches the credentials returned by the
+/// wrapped provider.  Each time the credentials are accessed, they are checked to see if
+/// they have expired, in which case they are retrieved from the wrapped provider again.
+///
+/// In order to access the wrapped provider, for instance to set a timeout, the `get_ref`
+/// and `get_mut` methods can be used.
+#[derive(Debug, Clone)]
+pub struct AutoRefreshingProvider<P: ProvideAwsCredentials + 'static> {
+    credentials_provider: P,
+    current_credentials: Arc<Mutex<Option<Result<AwsCredentials, CredentialsError>>>>,
+}
+
+impl<P: ProvideAwsCredentials + 'static> AutoRefreshingProvider<P> {
+    /// Create a new `AutoRefreshingProvider` around the provided base provider.
+    pub fn new(provider: P) -> Result<AutoRefreshingProvider<P>, CredentialsError> {
+        Ok(AutoRefreshingProvider {
+            credentials_provider: provider,
+            current_credentials: Arc::new(Mutex::new(None)),
+        })
+    }
+
+    /// Get a shared reference to the wrapped provider.
+    pub fn get_ref(&self) -> &P {
+        &self.credentials_provider
+    }
+
+    /// Get a mutable reference to the wrapped provider.
+    ///
+    /// This can be used to call `set_timeout` on the wrapped
+    /// provider.
+    pub fn get_mut(&mut self) -> &mut P {
+        &mut self.credentials_provider
+    }
+}
+
+#[async_trait]
+impl<P: ProvideAwsCredentials + Send + Sync + 'static> ProvideAwsCredentials
+    for AutoRefreshingProvider<P>
+{
+    async fn credentials(&self) -> Result<AwsCredentials, CredentialsError> {
+        loop {
+            let mut guard = self.current_credentials.lock().await;
+            match guard.as_ref() {
+                // no result from the future yet, let's keep using it
+                None => {
+                    let res = self.credentials_provider.credentials().await;
+                    *guard = Some(res);
+                }
+                Some(Err(e)) => return Err(e.clone()),
+                Some(Ok(creds)) => {
+                    if creds.credentials_are_expired() {
+                        *guard = None;
+                    } else {
+                        return Ok(creds.clone());
+                    };
+                }
+            }
+        }
+    }
+}
+
+/// Wraps a `ChainProvider` in an `AutoRefreshingProvider`.
+///
+/// The underlying `ChainProvider` checks multiple sources for credentials, and the `AutoRefreshingProvider`
+/// refreshes the credentials automatically when they expire.
+///
+/// # Warning
+///
+/// This provider allows the [`credential_process`][credential_process] option in the AWS config
+/// file (`~/.aws/config`), a method of sourcing credentials from an external process. This can
+/// potentially be dangerous, so proceed with caution. Other credential providers should be
+/// preferred if at all possible. If using this option, you should make sure that the config file
+/// is as locked down as possible using security best practices for your operating system.
+///
+/// [credential_process]: https://docs.aws.amazon.com/cli/latest/topic/config-vars.html#sourcing-credentials-from-external-processes
+#[derive(Clone)]
+pub struct DefaultCredentialsProvider(AutoRefreshingProvider<ChainProvider>);
+
+impl DefaultCredentialsProvider {
+    /// Creates a new thread-safe `DefaultCredentialsProvider`.
+    pub fn new() -> Result<DefaultCredentialsProvider, CredentialsError> {
+        let inner = AutoRefreshingProvider::new(ChainProvider::new())?;
+        Ok(DefaultCredentialsProvider(inner))
+    }
+}
+
+#[async_trait]
+impl ProvideAwsCredentials for DefaultCredentialsProvider {
+    async fn credentials(&self) -> Result<AwsCredentials, CredentialsError> {
+        self.0.credentials().await
+    }
+}
+
+/// Provides AWS credentials from multiple possible sources using a priority order.
+///
+/// The following sources are checked in order for credentials when calling `credentials`:
+///
+/// 1. Environment variables: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
+/// 2. `credential_process` command in the AWS config file, usually located at `~/.aws/config`.
+/// 3. AWS credentials file. Usually located at `~/.aws/credentials`.
+/// 4. IAM instance profile. Will only work if running on an EC2 instance with an instance profile/role.
+///
+/// If the sources are exhausted without finding credentials, an error is returned.
+///
+/// The provider has a default timeout of 30 seconds. While it should work well for most setups,
+/// you can change the timeout using the `set_timeout` method.
+///
+/// # Example
+///
+/// ```rust
+/// use std::time::Duration;
+///
+/// use rusoto_credential::ChainProvider;
+///
+/// let mut provider = ChainProvider::new();
+/// // you can overwrite the default timeout like this:
+/// provider.set_timeout(Duration::from_secs(60));
+/// ```
+///
+/// # Warning
+///
+/// This provider allows the [`credential_process`][credential_process] option in the AWS config
+/// file (`~/.aws/config`), a method of sourcing credentials from an external process. This can
+/// potentially be dangerous, so proceed with caution. Other credential providers should be
+/// preferred if at all possible. If using this option, you should make sure that the config file
+/// is as locked down as possible using security best practices for your operating system.
+///
+/// [credential_process]: https://docs.aws.amazon.com/cli/latest/topic/config-vars.html#sourcing-credentials-from-external-processes
+#[derive(Debug, Clone)]
+pub struct ChainProvider {
+    environment_provider: EnvironmentProvider,
+    instance_metadata_provider: InstanceMetadataProvider,
+    container_provider: ContainerProvider,
+    profile_provider: Option<ProfileProvider>,
+}
+
+impl ChainProvider {
+    /// Set the timeout on the provider to the specified duration.
+    pub fn set_timeout(&mut self, duration: Duration) {
+        self.instance_metadata_provider.set_timeout(duration);
+        self.container_provider.set_timeout(duration);
+    }
+}
+
+async fn chain_provider_credentials(
+    provider: ChainProvider,
+) -> Result<AwsCredentials, CredentialsError> {
+    if let Ok(creds) = provider.environment_provider.credentials().await {
+        return Ok(creds);
+    }
+    if let Some(ref profile_provider) = provider.profile_provider {
+        if let Ok(creds) = profile_provider.credentials().await {
+            return Ok(creds);
+        }
+    }
+    if let Ok(creds) = provider.container_provider.credentials().await {
+        return Ok(creds);
+    }
+    if let Ok(creds) = provider.instance_metadata_provider.credentials().await {
+        return Ok(creds);
+    }
+    Err(CredentialsError::new(
+        "Couldn't find AWS credentials in environment, credentials file, or IAM role.",
+    ))
+}
+
+#[async_trait]
+impl ProvideAwsCredentials for ChainProvider {
+    async fn credentials(&self) -> Result<AwsCredentials, CredentialsError> {
+        chain_provider_credentials(self.clone()).await
+    }
+}
+
+impl ChainProvider {
+    /// Create a new `ChainProvider` using a `ProfileProvider` with the default settings.
+    pub fn new() -> ChainProvider {
+        ChainProvider {
+            environment_provider: EnvironmentProvider::default(),
+            profile_provider: ProfileProvider::new().ok(),
+            instance_metadata_provider: InstanceMetadataProvider::new(),
+            container_provider: ContainerProvider::new(),
+        }
+    }
+
+    /// Create a new `ChainProvider` using the provided `ProfileProvider`.
+    pub fn with_profile_provider(profile_provider: ProfileProvider) -> ChainProvider {
+        ChainProvider {
+            environment_provider: EnvironmentProvider::default(),
+            profile_provider: Some(profile_provider),
+            instance_metadata_provider: InstanceMetadataProvider::new(),
+            container_provider: ContainerProvider::new(),
+        }
+    }
+}
+
+impl Default for ChainProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// This is a helper function as Option<T>::filter is not yet stable (see issue #45860).
+/// <https://github.com/rust-lang/rfcs/issues/2036> also affects the implementation of this.
+fn non_empty_env_var(name: &str) -> Option<String> {
+    match env_var(name) {
+        Ok(value) => {
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
+        }
+        Err(_) => None,
+    }
+}
+
+/// Parses the response from an AWS Metadata Service, either from an IAM Role, or a Container.
+fn parse_credentials_from_aws_service(response: &str) -> Result<AwsCredentials, CredentialsError> {
+    Ok(serde_json::from_str::<AwsCredentials>(response)?)
 }
