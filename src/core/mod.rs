@@ -12,4 +12,5 @@ pub mod proto;
 pub mod request;
 
 pub use crate::core::client::Client;
+pub use crate::core::request::HttpClient;
 pub use crate::core::request::{BufferedHttpResponse, DispatchSignedRequest, HttpResponse};
