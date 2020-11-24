@@ -8,12 +8,20 @@ edition = "2018"
 
 [dependencies]
 async-trait = "0.1"
+bytes = "0.5.6"
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 hyper = "0.13.9"
 serde_json = "1.0"
-tokio = { version = "0.3.4", features = ["macros", "process", "sync", "time"] }
+tokio = { version = "0.3.4", features = ["macros", "process", "sync", "time", "rt-multi-thread"] }
 dirs = "3.0.1"
 regex = "1.4.2"
 shlex = "0.1"
 futures = "0.3"
+pin-project = "1.0.2"
+md5 = "0.7"
+base64 = "0.13.0"
+time = "0.2.23"
+percent-encoding = "2"
+hmac = "0.10.1"
+sha-1 = "0.9.2"

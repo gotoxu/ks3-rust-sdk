@@ -1,6 +1,6 @@
 mod core;
 mod credential;
-
+mod signature;
 
 #[cfg(test)]
 mod tests {

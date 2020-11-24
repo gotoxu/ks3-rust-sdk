@@ -102,7 +102,7 @@ impl AwsCredentials {
     }
 
     /// Determine whether or not the credentials are expired.
-    fn credentials_are_expired(&self) -> bool {
+    pub fn credentials_are_expired(&self) -> bool {
         match self.expires_at {
             Some(ref e) =>
             // This is a rough hack to hopefully avoid someone requesting creds then sitting on them
