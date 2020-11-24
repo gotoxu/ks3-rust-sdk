@@ -2,6 +2,7 @@ pub use crate::credential::container::ContainerProvider;
 pub use crate::credential::environment::EnvironmentProvider;
 pub use crate::credential::instance_metadata::InstanceMetadataProvider;
 pub use crate::credential::profile::ProfileProvider;
+pub use crate::credential::static_provider::StaticProvider;
 
 mod container;
 mod environment;

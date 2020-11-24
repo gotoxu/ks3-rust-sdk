@@ -80,7 +80,7 @@ impl From<u8> for Month {
     }
 }
 
-pub(crate) fn Rfc1123(date: &OffsetDateTime) -> String {
+pub(crate) fn rfc1123(date: &OffsetDateTime) -> String {
     let weekday = date.weekday().to_string();
     let month = Month::from(date.month());
 

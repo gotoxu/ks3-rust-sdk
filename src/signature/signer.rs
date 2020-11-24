@@ -17,9 +17,10 @@ use sha1::Sha1;
 use time::OffsetDateTime;
 
 use crate::credential::AwsCredentials;
-use crate::signature::ks_time::Rfc1123;
+use crate::signature::ks_time::rfc1123;
 use crate::signature::ByteStream;
 use crate::signature::Region;
+use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::str;
@@ -261,8 +262,38 @@ impl SignedRequest {
         self.params = params;
     }
 
+    /// Complement SignedRequest by ensuring the following HTTP headers are set accordingly:
+    /// - host
+    /// - content-type
+    /// - content-length (if applicable)
+    pub fn complement(&mut self) {
+        // build the canonical request
+        self.canonical_uri = self.canonical_path();
+        self.canonical_query_string = build_canonical_query_string(&self.params);
+        // Gotta remove and re-add headers since by default they append the value.  If we're following
+        // a 307 redirect we end up with Three Stooges in the headers with duplicate values.
+        self.remove_header("Host");
+        self.add_header("Host", &self.hostname());
+        // if there's no content-type header set, set it to the default value
+        if let Entry::Vacant(entry) = self.headers.entry("Content-Type".to_owned()) {
+            let mut values = Vec::new();
+            values.push(b"application/octet-stream".to_vec());
+            entry.insert(values);
+        }
+        let len = match self.payload {
+            None => Some(0),
+            Some(SignedRequestPayload::Buffer(ref payload)) => Some(payload.len()),
+            Some(SignedRequestPayload::Stream(ref stream)) => stream.size_hint(),
+        };
+        if let Some(len) = len {
+            self.remove_header("Content-Length");
+            self.add_header("Content-Length", &format!("{}", len));
+        }
+    }
+
     /// Signs the request using Amazon Signature version 2 to verify identity.
     pub fn sign(&mut self, creds: &AwsCredentials) {
+        self.complement();
         if self.is_request_signed() && !creds.credentials_are_expired() {
             // If the request is already signed, and the credentials have not
             // expired yet ignore the signing request.
@@ -272,15 +303,13 @@ impl SignedRequest {
         // build time
         let date = OffsetDateTime::now_utc();
         self.remove_header("Date");
-        let formatted_time = Rfc1123(&date);
+        let formatted_time = rfc1123(&date);
         self.add_header("Date", &formatted_time);
 
         // build canonical headers
         let canonical_headers = canonical_headers(&self.headers);
 
         // build canonical resource
-        self.canonical_uri = canonical_uri(&self.path, &self.region);
-        self.canonical_query_string = build_canonical_query_string(&self.params);
         let canonical_resource = if self.canonical_query_string.is_empty() {
             self.canonical_uri.clone()
         } else {

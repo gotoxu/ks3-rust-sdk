@@ -4,14 +4,13 @@ version = "0.1.0"
 authors = ["Xu Qiaolun <Jamesxql@Gmail.com>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 async-trait = "0.1"
 bytes = "0.5.6"
 chrono = { version = "0.4", features = ["serde"] }
-serde = { version = "1.0", features = ["derive"] }
 hyper = "0.13.9"
+hyper-rustls = { version = "0.21.0", optional = true }
+hyper-tls = { version = "0.4", optional = true }
 serde_json = "1.0"
 tokio = { version = "0.3.4", features = ["macros", "process", "sync", "time", "rt-multi-thread"] }
 dirs = "3.0.1"
@@ -25,3 +24,18 @@ time = "0.2.23"
 percent-encoding = "2"
 hmac = "0.10.1"
 sha-1 = "0.9.2"
+http = "0.2"
+lazy_static = "1.4"
+flate2 = { version = "1.0", optional = true }
+log = "0.4"
+rustc_version = "0.3.0"
+serde = { version = "1.0.117", features = ["derive"] }
+xml-rs = "0.8"
+
+[features]
+default = ["native-tls"]
+encoding = ["flate2"]
+native-tls = ["hyper-tls"]
+rustls = ["hyper-rustls"]
+deserialize_structs = ["bytes/serde"]
+serialize_structs = ["bytes/serde"]
