@@ -1,7 +1,7 @@
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{future, stream, Stream, StreamExt};
 use pin_project::pin_project;
-use tokio::io::{AsyncRead, ReadBuf};
+use tokio::io::AsyncRead;
 
 use std::fmt;
 use std::io;
@@ -100,23 +100,23 @@ impl AsyncRead for ImplAsyncRead {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
         let this = self.project();
         if this.buffer.is_empty() {
             match futures::ready!(this.stream.poll_next(cx)) {
-                None => return Poll::Ready(Ok(())),
+                None => return Poll::Ready(Ok(0)),
                 Some(Err(e)) => return Poll::Ready(Err(e)),
                 Some(Ok(bytes)) => {
                     this.buffer.put(bytes);
                 }
             }
         }
-        let available = std::cmp::min(buf.remaining(), this.buffer.len());
+        let available = std::cmp::min(buf.len(), this.buffer.len());
         let bytes = this.buffer.split_to(available);
-        let mut left = buf.take(available);
-        left.put_slice(&bytes[..available]);
-        Poll::Ready(Ok(()))
+        let (left, _) = buf.split_at_mut(available);
+        left.copy_from_slice(&bytes[..available]);
+        Poll::Ready(Ok(available))
     }
 }
 
@@ -136,15 +136,9 @@ impl ImplBlockingRead {
 
 impl io::Read for ImplBlockingRead {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let rt = tokio::runtime::Runtime::new()?;
-        let mut rb = ReadBuf::new(buf);
-        rt.block_on(future::poll_fn(|cx| match tokio::io::AsyncRead::poll_read(
-            Pin::new(&mut self.inner),
-            cx,
-            &mut rb,
-        ) {
-            std::task::Poll::Ready(_) => Poll::Ready(Ok(rb.filled().len())),
-            std::task::Poll::Pending => std::task::Poll::Pending,
+        let mut rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(future::poll_fn(|cx| {
+            tokio::io::AsyncRead::poll_read(Pin::new(&mut self.inner), cx, buf)
         }))
     }
 }

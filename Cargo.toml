@@ -12,7 +12,7 @@ hyper = "0.13.9"
 hyper-rustls = { version = "0.21.0", optional = true }
 hyper-tls = { version = "0.4", optional = true }
 serde_json = "1.0"
-tokio = { version = "0.3.4", features = ["macros", "process", "sync", "time", "rt-multi-thread"] }
+tokio = { version = "0.2", features = ["tcp", "time", "rt-core", "fs", "macros", "process"] }
 dirs = "3.0.1"
 regex = "1.4.2"
 shlex = "0.1"
