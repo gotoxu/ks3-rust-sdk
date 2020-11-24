@@ -20,7 +20,6 @@ use crate::credential::AwsCredentials;
 use crate::signature::ks_time::rfc1123;
 use crate::signature::ByteStream;
 use crate::signature::Region;
-use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::str;
@@ -275,11 +274,11 @@ impl SignedRequest {
         self.remove_header("Host");
         self.add_header("Host", &self.hostname());
         // if there's no content-type header set, set it to the default value
-        if let Entry::Vacant(entry) = self.headers.entry("Content-Type".to_owned()) {
-            let mut values = Vec::new();
-            values.push(b"application/octet-stream".to_vec());
-            entry.insert(values);
-        }
+        // if let Entry::Vacant(entry) = self.headers.entry("Content-Type".to_owned()) {
+        //     let mut values = Vec::new();
+        //     values.push(b"application/octet-stream".to_vec());
+        //     entry.insert(values);
+        // }
         let len = match self.payload {
             None => Some(0),
             Some(SignedRequestPayload::Buffer(ref payload)) => Some(payload.len()),
@@ -310,10 +309,28 @@ impl SignedRequest {
         let canonical_headers = canonical_headers(&self.headers);
 
         // build canonical resource
+        let mut uri = self.canonical_uri().to_owned();
+        if !uri.is_empty() {
+            uri = uri.strip_prefix("/").unwrap().to_owned();
+            let uris: Vec<&str> = uri.split('/').collect();
+
+            let mut append = false;
+            if uris.len() == 1 && !uris[0].is_empty() {
+                append = true;
+            }
+            uri = format!("/{}", uris.join("/"));
+            if append {
+                uri = format!("{}/", uri);
+            }
+        }
+        if uri.is_empty() {
+            uri = String::from("/");
+        }
+
         let canonical_resource = if self.canonical_query_string.is_empty() {
-            self.canonical_uri.clone()
+            uri
         } else {
-            format!("{}?{}", &self.canonical_uri, &self.canonical_query_string)
+            format!("{}?{}", &uri, &self.canonical_query_string)
         };
 
         let md5_list = self.headers.get("Content-Md5");
@@ -350,19 +367,21 @@ impl SignedRequest {
         }
         canonical_request.push('\n');
         canonical_request.push_str(&canonical_resource);
+        println!("{}", canonical_request);
 
         let signature = sign_string(&canonical_request, creds.aws_secret_access_key());
         let auth_header = format!("AWS {}:{}", &creds.aws_access_key_id(), signature);
         self.remove_header("Authorization");
         self.add_header("Authorization", &auth_header);
+        println!("{}", auth_header);
     }
 
     /// is_request_signed returns if the request is currently signed or presigned
     fn is_request_signed(&self) -> bool {
-        if self.params.get("Signature").is_some() {
+        if self.params.get("signature").is_some() {
             return true;
         }
-        if self.headers.get("Authorization").is_some() {
+        if self.headers.get("authorization").is_some() {
             return true;
         }
         false
@@ -459,12 +478,14 @@ fn canonical_headers(headers: &BTreeMap<String, Vec<Vec<u8>>>) -> String {
     let mut canonical = String::new();
 
     for (key, value) in headers.iter() {
-        if !key.to_lowercase().starts_with("x-amz-") {
+        if !key.starts_with("x-amz-") {
             continue;
         }
 
-        canonical
-            .push_str(format!("{}:{}\n", key.to_lowercase(), canonical_values(value)).as_ref());
+        canonical.push_str(format!("{}:{}\n", key, canonical_values(value)).as_ref());
+    }
+    if !canonical.is_empty() {
+        canonical.remove(canonical.len() - 1);
     }
     canonical
 }
@@ -477,11 +498,7 @@ fn canonical_values(values: &[Vec<u8>]) -> String {
         if !st.is_empty() {
             st.push(',');
         }
-        if s.starts_with('\"') {
-            st.push_str(s);
-        } else {
-            st.push_str(s.replace("  ", " ").trim());
-        }
+        st.push_str(s);
     }
     st
 }
