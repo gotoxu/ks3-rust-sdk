@@ -9,8 +9,10 @@ pub mod encoding;
 pub mod error;
 #[doc(hidden)]
 pub mod proto;
+pub mod region;
 pub mod request;
 
 pub use crate::core::client::Client;
+pub use crate::core::region::Region;
 pub use crate::core::request::HttpClient;
 pub use crate::core::request::{BufferedHttpResponse, DispatchSignedRequest, HttpResponse};
