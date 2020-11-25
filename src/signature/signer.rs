@@ -12,6 +12,7 @@
 use bytes::Bytes;
 use hmac::{Hmac, Mac, NewMac};
 use hyper::Body;
+use log::{debug, log_enabled, Level::Debug};
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use sha1::Sha1;
 use time::OffsetDateTime;
@@ -225,6 +226,17 @@ impl SignedRequest {
         }
     }
 
+    // gets the value associated with the given key
+    pub fn get_header<K: ToString>(&self, key: K) -> Vec<Vec<u8>> {
+        let mut key_lower = key.to_string();
+        key_lower.make_ascii_lowercase();
+
+        match self.headers.get(&key_lower) {
+            None => vec![],
+            Some(v) => v.to_owned(),
+        }
+    }
+
     /// If the key exists in headers, set it to blank/unoccupied:
     pub fn remove_header(&mut self, key: &str) {
         let key_lower = key.to_ascii_lowercase();
@@ -333,28 +345,16 @@ impl SignedRequest {
             format!("{}?{}", &uri, &self.canonical_query_string)
         };
 
-        let md5_list = self.headers.get("Content-Md5");
+        let md5_list = self.get_header("Content-Md5");
         let mut md5_str = String::new();
-        if md5_list.is_some() {
-            let list = match md5_list {
-                Some(a) => a,
-                _ => unreachable!(),
-            };
-            if !list.is_empty() {
-                md5_str = String::from_utf8(list[0].clone()).unwrap();
-            }
+        if !md5_list.is_empty() {
+            md5_str = String::from_utf8(md5_list[0].clone()).unwrap();
         }
 
-        let type_list = self.headers.get("Content-Type");
+        let type_list = self.get_header("Content-Type");
         let mut type_str = String::new();
-        if type_list.is_some() {
-            let list = match type_list {
-                Some(a) => a,
-                _ => unreachable!(),
-            };
-            if !list.is_empty() {
-                type_str = String::from_utf8(list[0].clone()).unwrap();
-            }
+        if !type_list.is_empty() {
+            type_str = String::from_utf8(type_list[0].clone()).unwrap();
         }
 
         let mut canonical_request = format!(
@@ -368,10 +368,18 @@ impl SignedRequest {
         canonical_request.push('\n');
         canonical_request.push_str(&canonical_resource);
 
+        if log_enabled!(Debug) {
+            debug!("String to sign: {}", canonical_request)
+        }
+
         let signature = sign_string(&canonical_request, creds.aws_secret_access_key());
         let auth_header = format!("AWS {}:{}", &creds.aws_access_key_id(), signature);
         self.remove_header("Authorization");
         self.add_header("Authorization", &auth_header);
+
+        if log_enabled!(Debug) {
+            debug!("Authorization: {}", auth_header);
+        }
     }
 
     /// is_request_signed returns if the request is currently signed or presigned
