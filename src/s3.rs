@@ -2,8 +2,7 @@ use crate::core::error::Ks3Error;
 use crate::core::Client;
 use crate::core::{BufferedHttpResponse, DispatchSignedRequest, HttpResponse};
 use crate::credential::ProvideAwsCredentials;
-use crate::request::CreateBucketConfigurationSerializer;
-use crate::request::{CreateBucketError, CreateBucketOutput, CreateBucketRequest};
+use crate::request::*;
 use crate::signature::{Region, SignedRequest};
 
 use async_trait::async_trait;
@@ -17,6 +16,12 @@ pub trait S3 {
         &self,
         input: CreateBucketRequest,
     ) -> Result<CreateBucketOutput, Ks3Error<CreateBucketError>>;
+
+    /// <p><p>Adds an object to a bucket. You must have WRITE permissions on a bucket to add an object to it.</p> <p>Amazon S3 never adds partial objects; if you receive a success response, Amazon S3 added the entire object to the bucket.</p> <p>Amazon S3 is a distributed system. If it receives multiple write requests for the same object simultaneously, it overwrites all but the last object written. Amazon S3 does not provide object locking; if you need this, make sure to build it into your application layer or use versioning instead.</p> <p>To ensure that data is not corrupted traversing the network, use the <code>Content-MD5</code> header. When you use this header, Amazon S3 checks the object against the provided MD5 value and, if they do not match, returns an error. Additionally, you can calculate the MD5 while putting an object to Amazon S3 and compare the returned ETag to the calculated MD5 value.</p> <note> <p> The <code>Content-MD5</code> header is required for any request to upload an object with a retention period configured using Amazon S3 Object Lock. For more information about Amazon S3 Object Lock, see <a href="https://docs.aws.amazon.com/AmazonS3/latest/dev/object-lock-overview.html">Amazon S3 Object Lock Overview</a> in the <i>Amazon Simple Storage Service Developer Guide</i>. </p> </note> <p> <b>Server-side Encryption</b> </p> <p>You can optionally request server-side encryption. With server-side encryption, Amazon S3 encrypts your data as it writes it to disks in its data centers and decrypts the data when you access it. You have the option to provide your own encryption key or use AWS managed encryption keys. For more information, see <a href="https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingServerSideEncryption.html">Using Server-Side Encryption</a>.</p> <p> <b>Access Control List (ACL)-Specific Request Headers</b> </p> <p>You can use headers to grant ACL- based permissions. By default, all objects are private. Only the owner has full access control. When adding a new object, you can grant permissions to individual AWS accounts or to predefined groups defined by Amazon S3. These permissions are then added to the ACL on the object. For more information, see <a href="https://docs.aws.amazon.com/AmazonS3/latest/dev/acl-overview.html">Access Control List (ACL) Overview</a> and <a href="https://docs.aws.amazon.com/AmazonS3/latest/dev/acl-using-rest-api.html">Managing ACLs Using the REST API</a>. </p> <p> <b>Storage Class Options</b> </p> <p>By default, Amazon S3 uses the STANDARD storage class to store newly created objects. The STANDARD storage class provides high durability and high availability. Depending on performance needs, you can specify a different storage class. For more information, see <a href="https://docs.aws.amazon.com/AmazonS3/latest/dev/storage-class-intro.html">Storage Classes</a> in the <i>Amazon S3 Service Developer Guide</i>.</p> <p> <b>Versioning</b> </p> <p>If you enable versioning for a bucket, Amazon S3 automatically generates a unique version ID for the object being stored. Amazon S3 returns this ID in the response. When you enable versioning for a bucket, if Amazon S3 receives multiple write requests for the same object simultaneously, it stores all of the objects.</p> <p>For more information about versioning, see <a href="https://docs.aws.amazon.com/AmazonS3/latest/dev/AddingObjectstoVersioningEnabledBuckets.html">Adding Objects to Versioning Enabled Buckets</a>. For information about returning the versioning state of a bucket, see <a>GetBucketVersioning</a>. </p> <p class="title"> <b>Related Resources</b> </p> <ul> <li> <p> <a>CopyObject</a> </p> </li> <li> <p> <a>DeleteObject</a> </p> </li> </ul></p>
+    async fn put_object(
+        &self,
+        input: PutObjectRequest,
+    ) -> Result<PutObjectOutput, Ks3Error<PutObjectError>>;
 }
 
 /// A client for the Amazon S3 API.
@@ -113,6 +118,110 @@ impl S3 for S3Client {
         let result = CreateBucketOutput::default();
         let mut result = result;
         result.location = response.headers.remove("Location"); // parse non-payload
+        Ok(result)
+    }
+
+    /// <p><p>Adds an object to a bucket. You must have WRITE permissions on a bucket to add an object to it.</p> <p>Amazon S3 never adds partial objects; if you receive a success response, Amazon S3 added the entire object to the bucket.</p> <p>Amazon S3 is a distributed system. If it receives multiple write requests for the same object simultaneously, it overwrites all but the last object written. Amazon S3 does not provide object locking; if you need this, make sure to build it into your application layer or use versioning instead.</p> <p>To ensure that data is not corrupted traversing the network, use the <code>Content-MD5</code> header. When you use this header, Amazon S3 checks the object against the provided MD5 value and, if they do not match, returns an error. Additionally, you can calculate the MD5 while putting an object to Amazon S3 and compare the returned ETag to the calculated MD5 value.</p> <note> <p> The <code>Content-MD5</code> header is required for any request to upload an object with a retention period configured using Amazon S3 Object Lock. For more information about Amazon S3 Object Lock, see <a href="https://docs.aws.amazon.com/AmazonS3/latest/dev/object-lock-overview.html">Amazon S3 Object Lock Overview</a> in the <i>Amazon Simple Storage Service Developer Guide</i>. </p> </note> <p> <b>Server-side Encryption</b> </p> <p>You can optionally request server-side encryption. With server-side encryption, Amazon S3 encrypts your data as it writes it to disks in its data centers and decrypts the data when you access it. You have the option to provide your own encryption key or use AWS managed encryption keys. For more information, see <a href="https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingServerSideEncryption.html">Using Server-Side Encryption</a>.</p> <p> <b>Access Control List (ACL)-Specific Request Headers</b> </p> <p>You can use headers to grant ACL- based permissions. By default, all objects are private. Only the owner has full access control. When adding a new object, you can grant permissions to individual AWS accounts or to predefined groups defined by Amazon S3. These permissions are then added to the ACL on the object. For more information, see <a href="https://docs.aws.amazon.com/AmazonS3/latest/dev/acl-overview.html">Access Control List (ACL) Overview</a> and <a href="https://docs.aws.amazon.com/AmazonS3/latest/dev/acl-using-rest-api.html">Managing ACLs Using the REST API</a>. </p> <p> <b>Storage Class Options</b> </p> <p>By default, Amazon S3 uses the STANDARD storage class to store newly created objects. The STANDARD storage class provides high durability and high availability. Depending on performance needs, you can specify a different storage class. For more information, see <a href="https://docs.aws.amazon.com/AmazonS3/latest/dev/storage-class-intro.html">Storage Classes</a> in the <i>Amazon S3 Service Developer Guide</i>.</p> <p> <b>Versioning</b> </p> <p>If you enable versioning for a bucket, Amazon S3 automatically generates a unique version ID for the object being stored. Amazon S3 returns this ID in the response. When you enable versioning for a bucket, if Amazon S3 receives multiple write requests for the same object simultaneously, it stores all of the objects.</p> <p>For more information about versioning, see <a href="https://docs.aws.amazon.com/AmazonS3/latest/dev/AddingObjectstoVersioningEnabledBuckets.html">Adding Objects to Versioning Enabled Buckets</a>. For information about returning the versioning state of a bucket, see <a>GetBucketVersioning</a>. </p> <p class="title"> <b>Related Resources</b> </p> <ul> <li> <p> <a>CopyObject</a> </p> </li> <li> <p> <a>DeleteObject</a> </p> </li> </ul></p>
+    #[allow(unused_variables, warnings)]
+    async fn put_object(
+        &self,
+        input: PutObjectRequest,
+    ) -> Result<PutObjectOutput, Ks3Error<PutObjectError>> {
+        let request_uri = format!("/{bucket}/{key}", bucket = input.bucket, key = input.key);
+
+        let mut request = SignedRequest::new("PUT", "s3", &self.region, &request_uri);
+
+        request.add_optional_header("x-amz-acl", input.acl.as_ref());
+        request.add_optional_header("Cache-Control", input.cache_control.as_ref());
+        request.add_optional_header("Content-Disposition", input.content_disposition.as_ref());
+        request.add_optional_header("Content-Encoding", input.content_encoding.as_ref());
+        request.add_optional_header("Content-Language", input.content_language.as_ref());
+        request.add_optional_header("Content-Length", input.content_length.as_ref());
+        request.add_optional_header("Content-MD5", input.content_md5.as_ref());
+        request.add_optional_header("Content-Type", input.content_type.as_ref());
+        request.add_optional_header("Expires", input.expires.as_ref());
+        request.add_optional_header(
+            "x-amz-grant-full-control",
+            input.grant_full_control.as_ref(),
+        );
+        request.add_optional_header("x-amz-grant-read", input.grant_read.as_ref());
+        request.add_optional_header("x-amz-grant-read-acp", input.grant_read_acp.as_ref());
+        request.add_optional_header("x-amz-grant-write-acp", input.grant_write_acp.as_ref());
+
+        if let Some(ref metadata) = input.metadata {
+            for (header_name, header_value) in metadata.iter() {
+                let header = format!("x-amz-meta-{}", header_name);
+                request.add_header(header, header_value);
+            }
+        }
+        request.add_optional_header(
+            "x-amz-object-lock-legal-hold",
+            input.object_lock_legal_hold_status.as_ref(),
+        );
+        request.add_optional_header("x-amz-object-lock-mode", input.object_lock_mode.as_ref());
+        request.add_optional_header(
+            "x-amz-object-lock-retain-until-date",
+            input.object_lock_retain_until_date.as_ref(),
+        );
+        request.add_optional_header("x-amz-request-payer", input.request_payer.as_ref());
+        request.add_optional_header(
+            "x-amz-server-side-encryption-customer-algorithm",
+            input.sse_customer_algorithm.as_ref(),
+        );
+        request.add_optional_header(
+            "x-amz-server-side-encryption-customer-key",
+            input.sse_customer_key.as_ref(),
+        );
+        request.add_optional_header(
+            "x-amz-server-side-encryption-customer-key-MD5",
+            input.sse_customer_key_md5.as_ref(),
+        );
+        request.add_optional_header(
+            "x-amz-server-side-encryption-context",
+            input.ssekms_encryption_context.as_ref(),
+        );
+        request.add_optional_header(
+            "x-amz-server-side-encryption-aws-kms-key-id",
+            input.ssekms_key_id.as_ref(),
+        );
+        request.add_optional_header(
+            "x-amz-server-side-encryption",
+            input.server_side_encryption.as_ref(),
+        );
+        request.add_optional_header("x-amz-storage-class", input.storage_class.as_ref());
+        request.add_optional_header("x-amz-tagging", input.tagging.as_ref());
+        request.add_optional_header(
+            "x-amz-website-redirect-location",
+            input.website_redirect_location.as_ref(),
+        );
+
+        if let Some(__body) = input.body {
+            request.set_payload_stream(__body);
+        }
+
+        let mut response = self
+            .sign_and_dispatch(request, PutObjectError::from_response)
+            .await?;
+
+        let result = PutObjectOutput::default();
+        let mut result = result;
+        result.e_tag = response.headers.remove("ETag");
+        result.expiration = response.headers.remove("x-amz-expiration");
+        result.request_charged = response.headers.remove("x-amz-request-charged");
+        result.sse_customer_algorithm = response
+            .headers
+            .remove("x-amz-server-side-encryption-customer-algorithm");
+        result.sse_customer_key_md5 = response
+            .headers
+            .remove("x-amz-server-side-encryption-customer-key-MD5");
+        result.ssekms_encryption_context = response
+            .headers
+            .remove("x-amz-server-side-encryption-context");
+        result.ssekms_key_id = response
+            .headers
+            .remove("x-amz-server-side-encryption-aws-kms-key-id");
+        result.server_side_encryption = response.headers.remove("x-amz-server-side-encryption");
+        result.version_id = response.headers.remove("x-amz-version-id"); // parse non-payload
         Ok(result)
     }
 }

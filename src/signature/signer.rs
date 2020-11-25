@@ -367,13 +367,11 @@ impl SignedRequest {
         }
         canonical_request.push('\n');
         canonical_request.push_str(&canonical_resource);
-        println!("{}", canonical_request);
 
         let signature = sign_string(&canonical_request, creds.aws_secret_access_key());
         let auth_header = format!("AWS {}:{}", &creds.aws_access_key_id(), signature);
         self.remove_header("Authorization");
         self.add_header("Authorization", &auth_header);
-        println!("{}", auth_header);
     }
 
     /// is_request_signed returns if the request is currently signed or presigned
